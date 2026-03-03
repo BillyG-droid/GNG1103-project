@@ -67,7 +67,7 @@ root = tk.Tk()
 root.title("Teachable Machine → ESP32 Converter")
 root.geometry("400x200")
 
-label = tk.Label(root, text="Select a Teachable Machine .h5 model", pady=20)
+label = tk.Label(root, text="Select a Teachable Machine saved model", pady=20)
 label.pack()
 
 button = tk.Button(root, text="Select Model", command=select_file, width=20, height=2)
