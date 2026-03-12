@@ -8,18 +8,21 @@ import cv2
 import requests
 from PIL import Image, ImageTk
 
-
+model = None
+cap = None
+after_id = None
 
 classes = []
 show_feed=False
 frame_height=244
 frame_width=244
 
-
+name_labels = {}
 progress_bars = {}
 confidence_labels = {}
 
 def setClasses(filepath):
+    classes.clear()
     with open(filepath,"r") as f:
         lines = f.readlines()
         for line in lines:
@@ -27,8 +30,15 @@ def setClasses(filepath):
 
 
 def createNewUI():
-    select_button.pack_forget()
-    label.pack_forget()
+    for widget in confidence_frame.winfo_children():
+        widget.destroy()
+
+    name_labels.clear()
+    progress_bars.clear()
+    confidence_labels.clear()
+
+    select_button.destroy()
+    label.destroy()
 
     left_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
     right_frame.grid(row=1, column=1, sticky="nsew", padx=10, pady=10)
@@ -55,6 +65,7 @@ def createNewUI():
         conf_label = tk.Label(row, text="0.00")
         conf_label.pack(side="left")
 
+        name_labels[class_string] = name_label
         progress_bars[class_string] = bar
         confidence_labels[class_string] = conf_label
 
@@ -73,7 +84,8 @@ def updateChart(preds,class_index):
             confidence_labels[class_string].config(font=("Segoe UI", 10))
 
 
-def runModel(model,cap):
+def runModel():
+    global model, cap, after_id
 
     ret, frame = cap.read()
     if not ret:
@@ -104,29 +116,34 @@ def runModel(model,cap):
     display_image.imgtk = imgtk
     display_image.configure(image=imgtk)
 
-    root.after(30, lambda: runModel(model, cap))
+    after_id=root.after(30, runModel)
 
 
 def selectFile():
-   
+    global model, cap, after_id
     folder_path = filedialog.askdirectory(title="Select Folder")
     setClasses(f"{folder_path}/labels.txt")
     folder_path+="/model.savedmodel"
 
+    if after_id is not None:
+        root.after_cancel(after_id)
+
+    if cap is not None:
+        cap.release()
 
     if folder_path: 
         createNewUI()
         model = TFSMLayer(folder_path, call_endpoint="serving_default")
         cap = cv2.VideoCapture(0)
-        runModel(model,cap)
+        runModel()
     else:
         messagebox.showwarning("No Selection", "No folder selected!")
 
-
 root = tk.Tk()
 root.title("AI hopper sorter")
+root.geometry("800x600")  # Adjust size as needed
+root.configure(bg="#2c3e50")
 root.rowconfigure(1, weight=1)
-
 root.columnconfigure(0, weight=3)
 root.columnconfigure(1, weight=1)
 
@@ -139,8 +156,8 @@ bottom_frame=tk.Frame(root,bg="#2c3e50",)
 
 title = tk.Label(root,text="AI Hopper Sorter",font=("Segoe UI", 22, "bold"),bg="#2c3e50",fg="white",pady=10)
 
-label = tk.Label(root, text="Select a Teachable Machine saved model", pady=20)
-label.pack()
+label = tk.Label(root, text="Select a Teachable Machine saved model", font=("Segoe UI", 16, "bold"), bg="#2c3e50", fg="white", pady=20, padx=10)
+label.pack(pady=(50, 20))
 
 display_image=tk.Label(left_frame,bg="black")
 
@@ -148,7 +165,7 @@ prediction_label = tk.Label(right_frame,text="",font=("Segoe UI", 18, "bold"))
 
 confidence_frame = tk.Frame(right_frame)
 
-select_button = tk.Button(root, text="Select Model", width=20, height=2, command=selectFile)
+select_button = tk.Button( root, text="Select Model", font=("Segoe UI", 14, "bold"), bg="#3498db", fg="white", activebackground="#2980b9", relief="flat", width=20, height=2, command=selectFile)
 select_button.pack()
 
 change_model_button = tk.Button(bottom_frame, text="Change Model", bg="#3498db", fg="white", activebackground="#2980b9", relief="flat", width=20, height=2, command=selectFile)
