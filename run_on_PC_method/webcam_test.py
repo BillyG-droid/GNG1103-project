@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import filedialog,messagebox
+from tkinter import ttk
 import tensorflow as tf
 from keras.layers import TFSMLayer
 import numpy as np
@@ -14,48 +15,63 @@ classes = []
 show_feed=False
 frame_height=244
 frame_width=244
-bars = []
-bar_width = 40
-spacing = 30
-chart_height = 250
-baseline = 270
-max_height = 200
+
+
+progress_bars = {}
+confidence_labels = {}
 
 def setClasses(filepath):
     with open(filepath,"r") as f:
         lines = f.readlines()
         for line in lines:
-            classes.append(line[2:])
+            classes.append(line[2:].strip())
 
 
 def createNewUI():
-    select_button.grid_forget()
-    label.grid_forget()
-    prediction_label.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
-    display_image.grid(row=0,column=0, padx=10, pady=10,sticky="ne")
-    chart_canvas.grid(row=0, column=1, rowspan=2, padx=10, pady=10, sticky="sw")
+    select_button.pack_forget()
+    label.pack_forget()
 
-    i=0
-    for class_text in classes:
-        x0 = spacing + i*(bar_width + spacing)
-        x1 = x0 + bar_width
+    left_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+    right_frame.grid(row=1, column=1, sticky="nsew", padx=10, pady=10)
+    bottom_frame.grid(row=2, column=0,columnspan=2, sticky="nsew", padx=10, pady=10)
 
-        bar = chart_canvas.create_rectangle(x0, baseline, x1, baseline,fill="skyblue")
+    title.grid(row=0,column=0,columnspan=2)
+    display_image.pack()
+    prediction_label.pack(pady=10)
+    confidence_frame.pack(fill="x", padx=10)
+    change_model_button.pack()
+    
 
-        chart_canvas.create_text((x0+x1)/2,baseline + 15,text=class_text)
+    for class_string in classes:
 
-        bars.append(bar)
-        i+=1
+        row = tk.Frame(confidence_frame)
+        row.pack(fill="x", pady=5)
 
-def updateChart(preds):
-    i=0
-    for pred in preds:
-        height = pred * max_height
+        name_label = tk.Label(row, text=class_string, width=12, anchor="w")
+        name_label.pack(side="left")
 
-        x0, _, x1, _ = chart_canvas.coords(bars[i])
+        bar = ttk.Progressbar(row, length=150, maximum=100)
+        bar.pack(side="left", padx=5)
 
-        chart_canvas.coords(bars[i], x0, baseline - height, x1, baseline)
-        i+=1
+        conf_label = tk.Label(row, text="0.00")
+        conf_label.pack(side="left")
+
+        progress_bars[class_string] = bar
+        confidence_labels[class_string] = conf_label
+
+def updateChart(preds,class_index):
+    prediction_label.config(text=f"Prediction: {classes[class_index]}:({preds[class_index]*100:.2f}%)")
+    for i, class_string in enumerate(classes):
+
+        pred = preds[i]
+
+        progress_bars[class_string]["value"] = pred * 100
+        confidence_labels[class_string].config(text=f"{pred:.2f}")
+
+        if class_string == classes[class_index]:
+            confidence_labels[class_string].config(font=("Segoe UI", 10, "bold"))
+        else:
+            confidence_labels[class_string].config(font=("Segoe UI", 10))
 
 
 def runModel(model,cap,previous_time):
@@ -85,11 +101,7 @@ def runModel(model,cap,previous_time):
 
     confidence = float(np.max(prediction))
 
-
-    prediction_label.config(text=f"Prediction: {classes[class_index]}:({confidence:.2f}%)")
-    updateChart(prediction[0])
-    
-    
+    updateChart(prediction[0],class_index)
  
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
@@ -121,21 +133,33 @@ def selectFile():
 
 root = tk.Tk()
 root.title("AI hopper sorter")
-root.grid_columnconfigure(0, weight=1)
-root.grid_columnconfigure(1, weight=1)
-root.grid_rowconfigure(0, weight=1)
+root.rowconfigure(1, weight=1)
 
+root.columnconfigure(0, weight=3)
+root.columnconfigure(1, weight=1)
+
+left_frame = tk.Frame(root, bg="#1e1e1e")
+
+right_frame = tk.Frame(root, bg="#f5f5f5")
+
+bottom_frame=tk.Frame(root,bg="#2c3e50",)
+
+
+title = tk.Label(root,text="AI Hopper Sorter",font=("Segoe UI", 22, "bold"),bg="#2c3e50",fg="white",pady=10)
 
 label = tk.Label(root, text="Select a Teachable Machine saved model", pady=20)
-label.grid(row=0,column=0,columnspan=2)
+label.pack()
 
-display_image=tk.Label(root,bg="blue")
+display_image=tk.Label(left_frame,bg="black")
 
-prediction_label = tk.Label(root,text="",font=("Arial", 16),bg="skyblue",fg="blue")
+prediction_label = tk.Label(right_frame,text="",font=("Segoe UI", 18, "bold"))
 
-chart_canvas = tk.Canvas(root, width=300, height=300, bg="white")
+confidence_frame = tk.Frame(right_frame)
 
 select_button = tk.Button(root, text="Select Model", width=20, height=2, command=selectFile)
-select_button.grid(row=1,column=0,columnspan=2)
+select_button.pack()
+
+change_model_button = tk.Button(bottom_frame, text="Change Model", bg="#3498db", fg="white", activebackground="#2980b9", relief="flat", width=20, height=2, command=selectFile)
+
 
 root.mainloop()
