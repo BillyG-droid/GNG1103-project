@@ -2,17 +2,21 @@
 #include <WiFi.h>
 #include "esp_http_server.h"
 #include <sys/socket.h>
-
+#include <ESP32Servo.h>
+ 
 const char *ssid = "AI Sorter";
-
+ 
 WiFiUDP udp;
 const int udpPort = 4210;
-
+ 
 struct Color {
     const char* name;
     int value;
 };
-
+ 
+Servo Servo1;
+Servo Servo2;
+ 
 Color colors[] = {
     {"no ball", 0},
     {"pink", 1},
@@ -20,40 +24,37 @@ Color colors[] = {
     {"orange", 3},
     {"beige", 4}
 };
-
+ 
+static bool actionInProgress = false;
 unsigned long actionStarted = 0;
-
+unsigned long released = 0;
+unsigned long reseted = 0;
+bool move=false;
+ 
 int diverterServoAngle;
 int dispenseServoAngle;
-int pinkAngle=0;
-int blueAngle=45;
-int orangeAngle=90;
-int beigeAngle=180;
+int pinkAngle=45;
+int blueAngle=80;
+int orangeAngle=115;
+int beigeAngle=150;
 unsigned long sendTime = 0;
-
+ 
 int currentPrediction;
 int previousPrediction=0;
-
-const int pwmChannelDispense = 0;
-const int pwmChannelDiverter = 1;
-const int pwmFreq = 50;
-const int pwmResolution = 16;
-
-const int minUs = 500;
-const int maxUs = 2500;
-int maxDuty = 65535;
-
+ 
+ 
 //motor pin config
-int dispenseServoPin = 13;
-int diverterServoPin = 14;
-
+int dispenseServoPin = 12;
+int diverterServoPin = 13;
+int lightPin = 4;
+ 
 // AI Thinker ESP32-CAM pin config
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM      0
 #define SIOD_GPIO_NUM     26
 #define SIOC_GPIO_NUM     27
-
+ 
 #define Y9_GPIO_NUM       35
 #define Y8_GPIO_NUM       34
 #define Y7_GPIO_NUM       39
@@ -65,24 +66,29 @@ int diverterServoPin = 14;
 #define VSYNC_GPIO_NUM    25
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
-
+ 
 httpd_handle_t stream_httpd = NULL;
-
+ 
 int getColorValue(const char* name);
-
+ 
 static esp_err_t stream_handler(httpd_req_t *req);
-
+ 
 void startCameraServer();
-
+ 
 int usToDuty(int us);
-
+ 
 void setServoAngle(int angle, int channel);
-
+ 
 void releaseBall();
-
+void reset();
+void controlTask(void *pvParameters);
+ 
 void setup() {
     Serial.begin(9600);
-
+ 
+    pinMode(lightPin, OUTPUT);
+    digitalWrite(lightPin,HIGH);
+ 
     camera_config_t config;
     config.ledc_channel = LEDC_CHANNEL_0;
     config.ledc_timer = LEDC_TIMER_0;
@@ -104,36 +110,49 @@ void setup() {
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = 20000000;
     config.pixel_format = PIXFORMAT_JPEG;
-
+ 
     config.frame_size = FRAMESIZE_QVGA; // 320x240 (stable)
     config.jpeg_quality = 12;
     config.fb_count = 1;
-
+ 
     // Init camera
     if (esp_camera_init(&config) != ESP_OK) {
         Serial.println("Camera init failed");
         return;
     }
-
+ 
     // Connect WiFi
     WiFi.softAP(ssid);
-
+ 
     Serial.println("SoftAP started");
     Serial.print("IP address: ");
     Serial.println(WiFi.softAPIP());
-
+ 
     udp.begin(udpPort);
     Serial.printf("UDP server started on port %d\n", udpPort);
-
+ 
     startCameraServer();
-
-    ledcAttachChannel(dispenseServoPin,50,16,pwmChannelDispense);
-
-    ledcAttachChannel(diverterServoPin,50,16,pwmChannelDiverter);
-    
+ 
+    Servo1.attach(dispenseServoPin);
+    Servo2.attach(diverterServoPin);
+    Servo1.write(90);
+ 
+    xTaskCreatePinnedToCore(
+    controlTask,      // function
+    "Control Task",   // name
+    10000,            // stack size
+    NULL,             // parameters
+    1,                // priority
+    NULL,             // task handle
+    1                 // core (1 = APP CPU)
+);
 }
-
-void loop() {
+void loop(){
+ 
+}
+   
+void controlTask(void *pvParameters){
+while (true) {
    int packetSize = udp.parsePacket();
    unsigned long now = millis();
     if (packetSize) {
@@ -143,37 +162,57 @@ void loop() {
         packet[len] = 0;
         }
         Serial.printf("Received: %s\n", packet);
-
+ 
         currentPrediction = getColorValue(packet);
     }
-    
+/*****************************************/
+//edit until the end of the function
+//Servo1 is the servo controlling the gate
+// use vTaskDelay( *time in ms* / portTICK_PERIOD_MS); instead of delay
+/******************************************/
     switch (currentPrediction){
         case 1:
             diverterServoAngle=pinkAngle;
+            move=true;
             break;
         case 2:
             diverterServoAngle=blueAngle;
+            move=true;
             break;
         case 3:
             diverterServoAngle=orangeAngle;
+            move=true;
             break;
         case 4:
             diverterServoAngle=beigeAngle;
+            move=true;
             break;
         default:
+            move=false;
             break;
     }
-    if(currentPrediction==previousPrediction && currentPrediction!=0){
-        setServoAngle(diverterServoAngle,pwmChannelDiverter);
+   if(currentPrediction == previousPrediction && currentPrediction != 0 && !actionInProgress && move){
+        Serial.println("moving!");
+        Servo2.write(diverterServoAngle);
         actionStarted = millis();
+        actionInProgress = true;
     }
-    if(now-actionStarted>500){
-        releaseBall();
-        actionStarted = 0;
+    if((now-actionStarted>1000) && (actionStarted!=0) && move){
+        Servo1.write(180);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        Servo1.write(0);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        Servo1.write(90);
     }
+ 
+       
     previousPrediction=currentPrediction;
+ 
+    vTaskDelay(10 / portTICK_PERIOD_MS);
 }
-
+}
+ 
+//DO NOT TOUCH
 int getColorValue(const char* name) {
     for (int i = 0; i < sizeof(colors)/sizeof(colors[0]); i++) {
         if (strcmp(name, colors[i].name) == 0) {
@@ -182,18 +221,19 @@ int getColorValue(const char* name) {
     }
     return -1;
 }
-
+ 
+//DO NOT TOUCH
 static esp_err_t stream_handler(httpd_req_t *req) {
     camera_fb_t* fb = NULL;
     esp_err_t res = ESP_OK;
-
+ 
     res = httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
     if (res != ESP_OK) return res;
-
+ 
     httpd_resp_send_chunk(req, "\r\n", 2);
-
+ 
     int client_sock = httpd_req_to_sockfd(req);
-
+ 
     while (true) {
         // Check if client disconnected
         char buf;
@@ -205,71 +245,50 @@ static esp_err_t stream_handler(httpd_req_t *req) {
             Serial.printf("Socket error: %d\n", errno);
             break;
         }
-
+ 
         fb = esp_camera_fb_get();
         if (!fb) {
             Serial.println("Camera capture failed");
             break;
         }
-
+ 
         char header[128];
         int len = snprintf(header, sizeof(header),
                            "--frame\r\n"
                            "Content-Type: image/jpeg\r\n"
                            "Content-Length: %u\r\n\r\n",
                            fb->len);
-
+ 
         res = httpd_resp_send_chunk(req, header, len);
         if (res == ESP_OK) {
             res = httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
         }
-
+ 
         esp_camera_fb_return(fb);
-
+ 
         if (res != ESP_OK) {
             Serial.println("Client disconnected during send");
             break;
         }
     }
-
+ 
     httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }
-
+ 
+//DO NOT TOUCH
 void startCameraServer() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-
+ 
     httpd_uri_t stream_uri = {
         .uri       = "/stream",
         .method    = HTTP_GET,
         .handler   = stream_handler,
         .user_ctx  = NULL
     };
-    
-
+   
+ 
     if (httpd_start(&stream_httpd, &config) == ESP_OK) {
         httpd_register_uri_handler(stream_httpd, &stream_uri);
     }
-}
-
-int usToDuty(int us) {
-  int periodUs = 1000000 / pwmFreq; // 20,000 µs
-  return (us * maxDuty) / periodUs;
-}
-
-void setServoAngle(int angle, int channel) {
-  int pulseWidth = map(angle, 0, 180, minUs, maxUs);
-  int duty = usToDuty(pulseWidth);
-  ledcWrite(channel, duty);
-}
-
-void releaseBall(){
-    if(dispenseServoAngle==0){
-        dispenseServoAngle=180;
-    }
-    else{
-        dispenseServoAngle=0;
-    }
-    setServoAngle(dispenseServoAngle,pwmChannelDispense);
-
 }
